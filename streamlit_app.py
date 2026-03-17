@@ -1,63 +1,69 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 import json
+import re
 from io import BytesIO
-from scraper import get_trendyol_data  # scraper.py'dan fonksiyonu çağırıyoruz
 
 st.set_page_config(page_title="Trendyol Analiz", layout="wide")
 
-# Excel indirme yardımcısı
+# Excel indirme fonksiyonu
 def to_excel(df):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Veriler')
+        df.to_excel(writer, index=False, sheet_name='Veri')
     return output.getvalue()
 
-st.title("🚀 Trendyol Ürün Analiz Paneli")
+st.title("🚀 Trendyol Manuel Veri Çözücü")
 
-# Sekme Yapısı
-tab1, tab2 = st.tabs(["🌐 Otomatik Analiz", "📝 Manuel Veri Yapıştır"])
+st.info("Trendyol Network panelinden kopyaladığınız 'HTML' veya 'JSON' metni aşağıya yapıştırın.")
 
-with tab1:
-    st.sidebar.header("Ayarlar")
-    cat_id = st.sidebar.text_input("Kategori ID (Örn: 104024)", "104024")
-    page_count = st.sidebar.slider("Sayfa Sayısı", 1, 5, 2)
-    
-    if st.sidebar.button("Analizi Başlat"):
-        with st.spinner("Veriler çekiliyor..."):
-            df = get_trendyol_data(cat_id, page_count)
-            if not df.empty:
-                st.success(f"{len(df)} ürün bulundu!")
-                st.download_button("📥 Excel Olarak İndir", to_excel(df), "trendyol_veri.xlsx")
+raw_input = st.text_area("Veriyi buraya yapıştırın (<!DOCTYPE html> ile başlayan metin dahil olabilir):", height=300)
+
+if st.button("🔍 Veriyi Çözümle ve Analiz Et"):
+    if not raw_input:
+        st.warning("Lütfen önce bir veri yapıştırın.")
+    else:
+        try:
+            content = []
+            # 1. Senaryo: Saf JSON verisi gelmişse
+            if raw_input.strip().startswith('{'):
+                js_data = json.loads(raw_input)
+                content = js_data.get("content", js_data.get("products", []))
+            
+            # 2. Senaryo: HTML (Az önce gönderdiğin metin) gelmişse
+            else:
+                # Metnin içindeki gizli veri kutusunu buluyoruz
+                found = re.search(r'__single-search-result__PROPS\"\s*:\s*({.*?})<', raw_input)
+                if not found:
+                    found = re.search(r'__SEARCH_APP_INITIAL_STATE__\s*=\s*({.*?});', raw_input)
                 
-                fig = px.bar(df.nlargest(10, 'Favori'), x='Favori', y='Ürün', orientation='h', color='Fiyat', title="En Çok Favorilenenler")
-                st.plotly_chart(fig, use_container_width=True)
+                if found:
+                    cleaned_json = found.group(1)
+                    js_data = json.loads(cleaned_json)
+                    # HTML içindeki yapı farklıdır, 'products' veya 'data.products' altında olur
+                    content = js_data.get("products", js_data.get("data", {}).get("products", []))
+
+            if content:
+                all_products = []
+                for p in content:
+                    all_products.append({
+                        "Ürün Adı": p.get("name"),
+                        "Marka": p.get("brand", {}).get("name") if isinstance(p.get("brand"), dict) else p.get("brand", "-"),
+                        "Fiyat": p.get("price", {}).get("sellingPrice", 0),
+                        "Favori": p.get("favoriteCount", 0),
+                        "Yorum Sayısı": p.get("ratingCount", 0)
+                    })
+                
+                df = pd.DataFrame(all_products)
+                st.success(f"✅ Başarılı! {len(df)} adet ürün ayıklandı.")
+                
+                # Excel İndir
+                st.download_button("📥 Excel Olarak İndir", to_excel(df), "trendyol_liste.xlsx")
+                
+                # Tabloyu Göster
                 st.dataframe(df, use_container_width=True)
             else:
-                st.error("Otomatik veri çekilemedi. Trendyol engellemiş olabilir. Lütfen 'Manuel Veri Yapıştır' sekmesini deneyin.")
-
-with tab2:
-    st.subheader("Trendyol JSON Verisini Yapıştır")
-    st.info("Trendyol'da F12 -> Network -> 'filter' dosyasına sağ tık -> Copy Response yapıp buraya yapıştırın.")
-    
-    raw_json = st.text_area("JSON içeriğini buraya ekleyin:", height=200)
-    
-    if st.button("Veriyi Çözümle"):
-        try:
-            js_data = json.loads(raw_json)
-            content = js_data.get("content", [])
-            manual_list = []
-            for item in content:
-                manual_list.append({
-                    "Ürün": item.get("name"),
-                    "Marka": item.get("brand", {}).get("name"),
-                    "Fiyat": item.get("price", {}).get("sellingPrice"),
-                    "Favori": item.get("favoriteCount")
-                })
-            df_m = pd.DataFrame(manual_list)
-            st.success(f"{len(df_m)} ürün ayıklandı!")
-            st.plotly_chart(px.bar(df_m.nlargest(10, 'Favori'), x='Favori', y='Ürün', orientation='h'))
-            st.dataframe(df_m)
+                st.error("Metin içinde ürün verisi bulunamadı. Lütfen doğru dosyayı (sr? veya filter?) kopyaladığınızdan emin olun.")
+        
         except Exception as e:
-            st.error(f"Hata: Veri formatı uyumsuz. {e}")
+            st.error(f"⚠️ Bir hata oluştu: Metin formatı beklenen yapıda değil. (Detay: {str(e)})")
