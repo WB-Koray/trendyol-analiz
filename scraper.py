@@ -1,45 +1,52 @@
-import requests
-import pandas as pd
+from curl_cffi import requests
+import json
+import time
 
-def get_trendyol_data(category_id, pages):
-    all_products = []
-    session = requests.Session()
-    
-    # Gerçek bir tarayıcı gibi görünmek için gerekli kimlik bilgileri
+def fetch_trendyol_data(url):
+    # Trendyol'un gerçek bir kullanıcı ile botu ayırt ettiği kritik başlıklar
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "tr-TR,tr;q=0.9",
-        "Referer": "https://www.trendyol.com/",
-        "X-Domain": "https://www.trendyol.com"
+        "authority": "public.trendyol.com",
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "referer": "https://www.trendyol.com/",
+        "origin": "https://www.trendyol.com",
+        "sec-ch-ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
     }
 
-    for page in range(1, pages + 1):
-        url = "https://public.trendyol.com/discovery-web-search-service/v1/filter"
-        params = {
-            "wc": category_id,
-            "pi": page,
-            "sst": "BEST_SELLER",
-            "culture": "tr-TR",
-            "storefrontId": "1"
-        }
+    try:
+        # curl_cffi sayesinde TLS Fingerprint (parmak izi) gerçek tarayıcı gibi görünür
+        response = requests.get(
+            url, 
+            headers=headers, 
+            impersonate="chrome120", # En kritik nokta: Chrome taklidi
+            timeout=30
+        )
         
-        try:
-            res = session.get(url, params=params, headers=headers, timeout=15)
-            if res.status_code == 200:
-                data = res.json()
-                products = data.get("content", [])
-                
-                for p in products:
-                    all_products.append({
-                        "Ürün": p.get("name"),
-                        "Marka": p.get("brand", {}).get("name") if p.get("brand") else "-",
-                        "Fiyat": p.get("price", {}).get("sellingPrice", 0),
-                        "Favori": p.get("favoriteCount", 0),
-                        "Yorum": p.get("ratingCount", 0),
-                        "Link": "https://www.trendyol.com" + p.get("url", "")
-                    })
-        except:
-            continue
-            
-    return pd.DataFrame(all_products)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            print(f"Hata Kodu: {response.status_code}")
+            return None
+    except Exception as e:
+        print(f"Bağlantı Hatası: {e}")
+        return None
+
+def parse_products(data):
+    if not data or 'data' not in data or 'products' not in data['data']:
+        return []
+    
+    products_list = []
+    for item in data['data']['products']:
+        product = {
+            "İsim": item.get('name'),
+            "Marka": item.get('brand', {}).get('name'),
+            "Fiyat": item.get('price', {}).get('sellingPrice', {}).get('amount'),
+            "Favori": item.get('favoriteCount'),
+            "Puan": item.get('ratingScore'),
+            "URL": f"https://www.trendyol.com{item.get('url')}"
+        }
+        products_list.append(product)
+    return products_list
