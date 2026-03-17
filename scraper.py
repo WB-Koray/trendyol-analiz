@@ -1,44 +1,61 @@
-import streamlit as st
+import requests
 import pandas as pd
-import plotly.express as px
-import re
-import json
 
-st.set_page_config(page_title="Trendyol Analiz", layout="wide")
-
-st.title("🚀 Trendyol Veri Analiz Paneli")
-
-tab1, tab2 = st.tabs(["Otomatik Çek (API)", "Veri Yapıştır (Manuel)"])
-
-with tab1:
-    st.info("Trendyol bazen bulut sunucuları engelleyebilir. Eğer çalışmazsa Manuel sekmesini kullanın.")
-    # Mevcut çekme kodun burada kalsın...
-
-with tab2:
-    st.subheader("📝 Trendyol Sayfa Verisini Yapıştır")
-    st.markdown("""
-    **Nasıl Yapılır?**
-    1. Trendyol kategorisine gir. 2. `F12` tuşuna bas (İncele). 3. `Network` sekmesine tıkla.
-    4. Sayfayı yenile. 5. `filter` yazan isteğe sağ tıkla -> `Copy Response`. 6. Buraya yapıştır.
-    """)
-    raw_data = st.text_area("JSON Verisini Buraya Yapıştırın", height=200)
+def get_trendyol_data(category_id, pages):
+    all_products = []
+    # Tarayıcı oturumunu simüle etmek için session başlatıyoruz
+    session = requests.Session()
     
-    if st.button("Veriyi Çözümle"):
+    # Trendyol'un bot korumasını geçmek için en kritik bilgiler
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": f"https://www.trendyol.com/sr?wc={category_id}",
+        "X-Requested-With": "XMLHttpRequest"
+    }
+    
+    # Önce ana sayfaya bir istek atıp çerezleri (cookies) alıyoruz
+    try:
+        session.get("https://www.trendyol.com", headers=headers, timeout=10)
+    except:
+        pass
+
+    for page in range(1, pages + 1):
+        # Arama servisinin asıl adresi
+        url = "https://public.trendyol.com/discovery-web-search-service/v1/filter"
+        
+        params = {
+            "wc": category_id,
+            "pi": page,
+            "sst": "BEST_SELLER",
+            "culture": "tr-TR",
+            "storefrontId": "1"
+        }
+        
         try:
-            data = json.loads(raw_data)
-            products = data.get("content", [])
-            all_products = []
-            for p in products:
-                all_products.append({
-                    "Ürün": p.get("name"),
-                    "Marka": p.get("brand", {}).get("name"),
-                    "Fiyat": p.get("price", {}).get("sellingPrice"),
-                    "Favori": p.get("favoriteCount"),
-                    "Yorum": p.get("ratingCount")
-                })
-            df = pd.DataFrame(all_products)
-            st.success(f"{len(df)} ürün başarıyla ayıklandı!")
-            st.plotly_chart(px.bar(df.nlargest(10, 'Favori'), x='Favori', y='Ürün', orientation='h'))
-            st.dataframe(df)
-        except:
-            st.error("Veri formatı hatalı. Lütfen Trendyol Network yanıtını (JSON) yapıştırdığınızdan emin olun.")
+            # Çerezleri de içeren session ile istek atıyoruz
+            res = session.get(url, params=params, headers=headers, timeout=15)
+            
+            if res.status_code == 200:
+                data = res.json()
+                products = data.get("content", [])
+                
+                # Eğer content yoksa alternatif anahtarlara bak
+                if not products:
+                    products = data.get("products", [])
+
+                for p in products:
+                    all_products.append({
+                        "Ürün Adı": p.get("name"),
+                        "Marka": p.get("brand", {}).get("name") if p.get("brand") else "-",
+                        "Fiyat": p.get("price", {}).get("sellingPrice", 0),
+                        "Favori": p.get("favoriteCount", 0),
+                        "Değerlendirme": p.get("ratingCount", 0),
+                        "Puan": p.get("ratingScore", 0),
+                        "Link": "https://www.trendyol.com" + p.get("url", "")
+                    })
+        except Exception as e:
+            print(f"Hata oluştu: {e}")
+            
+    return pd.DataFrame(all_products)
