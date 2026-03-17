@@ -3,3 +3,4 @@ requests
 pandas
 plotly
 xlsxwriter
+curl_cffi
