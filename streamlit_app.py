@@ -4,66 +4,64 @@ import json
 import re
 from io import BytesIO
 
-st.set_page_config(page_title="Trendyol Analiz", layout="wide")
+st.set_page_config(page_title="Trendyol Veri Ayıklayıcı", layout="wide")
 
-# Excel indirme fonksiyonu
 def to_excel(df):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Veri')
+        df.to_excel(writer, index=False, sheet_name='Trendyol')
     return output.getvalue()
 
-st.title("🚀 Trendyol Manuel Veri Çözücü")
+st.title("🛡️ Trendyol Akıllı Veri Çözücü")
+st.markdown("Trendyol sayfasından kopyaladığınız karmaşık metni aşağıya yapıştırın.")
 
-st.info("Trendyol Network panelinden kopyaladığınız 'HTML' veya 'JSON' metni aşağıya yapıştırın.")
+raw_input = st.text_area("Metni buraya yapıştırın:", height=300)
 
-raw_input = st.text_area("Veriyi buraya yapıştırın (<!DOCTYPE html> ile başlayan metin dahil olabilir):", height=300)
-
-if st.button("🔍 Veriyi Çözümle ve Analiz Et"):
+if st.button("🚀 Analizi Başlat"):
     if not raw_input:
-        st.warning("Lütfen önce bir veri yapıştırın.")
+        st.warning("Lütfen metin kutusunu doldurun.")
     else:
+        content = []
         try:
-            content = []
-            # 1. Senaryo: Saf JSON verisi gelmişse
+            # 1. DENEME: Saf JSON (Filter dosyası)
             if raw_input.strip().startswith('{'):
-                js_data = json.loads(raw_input)
-                content = js_data.get("content", js_data.get("products", []))
+                js = json.loads(raw_input)
+                content = js.get("content", js.get("products", []))
             
-            # 2. Senaryo: HTML (Az önce gönderdiğin metin) gelmişse
-            else:
-                # Metnin içindeki gizli veri kutusunu buluyoruz
-                found = re.search(r'__single-search-result__PROPS\"\s*:\s*({.*?})<', raw_input)
-                if not found:
-                    found = re.search(r'__SEARCH_APP_INITIAL_STATE__\s*=\s*({.*?});', raw_input)
+            # 2. DENEME: HTML içinden PROPS yakalama (Kapsamlı Regex)
+            if not content:
+                # Metin içindeki JSON bloğunu daha geniş bir aralıkta arıyoruz
+                match = re.search(r'__single-search-result__PROPS\"\s*:\s*({.*?})["\s]*[,<]', raw_input)
+                if match:
+                    js = json.loads(match.group(1))
+                    # Trendyol'un props yapısı: data -> products
+                    content = js.get("data", {}).get("products", [])
                 
-                if found:
-                    cleaned_json = found.group(1)
-                    js_data = json.loads(cleaned_json)
-                    # HTML içindeki yapı farklıdır, 'products' veya 'data.products' altında olur
-                    content = js_data.get("products", js_data.get("data", {}).get("products", []))
+            # 3. DENEME: Alternatif SEARCH_APP_INITIAL_STATE
+            if not content:
+                match = re.search(r'__SEARCH_APP_INITIAL_STATE__\s*=\s*({.*?});', raw_input)
+                if match:
+                    js = json.loads(match.group(1))
+                    content = js.get("products", [])
 
             if content:
-                all_products = []
+                data_list = []
                 for p in content:
-                    all_products.append({
+                    data_list.append({
                         "Ürün Adı": p.get("name"),
                         "Marka": p.get("brand", {}).get("name") if isinstance(p.get("brand"), dict) else p.get("brand", "-"),
                         "Fiyat": p.get("price", {}).get("sellingPrice", 0),
                         "Favori": p.get("favoriteCount", 0),
-                        "Yorum Sayısı": p.get("ratingCount", 0)
+                        "Yorum": p.get("ratingCount", 0),
+                        "Puan": p.get("ratingScore", 0)
                     })
                 
-                df = pd.DataFrame(all_products)
-                st.success(f"✅ Başarılı! {len(df)} adet ürün ayıklandı.")
-                
-                # Excel İndir
+                df = pd.DataFrame(data_list)
+                st.success(f"✅ Başarıyla {len(df)} ürün bulundu!")
                 st.download_button("📥 Excel Olarak İndir", to_excel(df), "trendyol_liste.xlsx")
-                
-                # Tabloyu Göster
                 st.dataframe(df, use_container_width=True)
             else:
-                st.error("Metin içinde ürün verisi bulunamadı. Lütfen doğru dosyayı (sr? veya filter?) kopyaladığınızdan emin olun.")
+                st.error("❌ Üzgünüm, bu metin bloğunda ürün verisine rastlanmadı. Lütfen Trendyol Network panelindeki dosyayı (sağ tık -> Copy response) kopyaladığınızdan emin olun.")
         
         except Exception as e:
-            st.error(f"⚠️ Bir hata oluştu: Metin formatı beklenen yapıda değil. (Detay: {str(e)})")
+            st.error(f"⚠️ Veri işlenirken bir hata oluştu. Lütfen metnin tamamını kopyaladığınızdan emin olun. (Hata: {str(e)})")
