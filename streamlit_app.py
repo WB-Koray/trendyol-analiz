@@ -2,94 +2,83 @@ import streamlit as st
 import pandas as pd
 import json
 from io import BytesIO
-from curl_cffi import requests
 
-# Sayfa Ayarları
-st.set_page_config(page_title="Trendyol Akıllı Analiz", layout="wide", page_icon="🚀")
+st.set_page_config(page_title="Trendyol Veri Analizi", layout="wide", page_icon="🚀")
 
-# --- FONKSİYONLAR ---
 def to_excel(df):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Trendyol_Rapor')
+        df.to_excel(writer, index=False, sheet_name='Trendyol_Veri')
     return output.getvalue()
 
-def auto_scrape(api_url):
-    headers = {
-        "authority": "public.trendyol.com",
-        "accept": "application/json, text/plain, */*",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "referer": "https://www.trendyol.com/",
-    }
-    try:
-        # Zırhlı çekme yöntemi
-        res = requests.get(api_url, headers=headers, impersonate="chrome120", timeout=30)
-        if res.status_code == 200:
-            return res.json()
-        return None
-    except:
-        return None
-
-def process_data(js_data):
-    # Ürün listesini bulma
+def smart_parse(js_data):
+    # Ürün listesini farklı anahtarlardan bulmaya çalış
     products = js_data.get("products", js_data.get("content", []))
     if not products and "data" in js_data:
         products = js_data["data"].get("products", [])
     
-    data_list = []
+    parsed_list = []
     for p in products:
-        # Fiyat, Favori ve Satış bilgisini ayıklama
-        price_obj = p.get("price", {})
-        social_proofs = p.get("socialProof", [])
+        # Fiyat yakalama (Current, Selling veya Original)
+        pr = p.get("price", {})
+        price = pr.get("current", pr.get("sellingPrice", pr.get("originalPrice", 0)))
+        
+        # Sosyal kanıtlar (Favori ve Satış)
         fav = p.get("favoriteCount", 0)
-        order = "-"
-        for s in social_proofs:
+        orders = "-"
+        for s in p.get("socialProof", []):
             if s.get("key") == "favoriteCount": fav = s.get("value", fav)
-            if s.get("key") == "orderCount": order = s.get("value", "-")
-            
-        data_list.append({
-            "Ürün Adı": p.get("name"),
+            if s.get("key") == "orderCount": orders = s.get("value", "-")
+        
+        parsed_list.append({
+            "Ürün Adı": p.get("name", "Bilinmiyor"),
             "Marka": p.get("brand", {}).get("name") if isinstance(p.get("brand"), dict) else p.get("brand", "-"),
-            "Fiyat (TL)": price_obj.get("current", price_obj.get("sellingPrice", 0)),
+            "Fiyat (TL)": price,
             "Favori": fav,
             "Yorum": p.get("ratingCount", 0),
-            "Satış Bilgisi": order,
+            "Satış Bilgisi": orders,
+            "Puan": p.get("ratingScore", {}).get("averageRating", 0) if isinstance(p.get("ratingScore"), dict) else p.get("ratingScore", 0),
             "Link": "https://www.trendyol.com" + p.get("url", "")
         })
-    return pd.DataFrame(data_list)
+    return pd.DataFrame(parsed_list)
 
-# --- ARAYÜZ TASARIMI ---
-st.title("🚀 Trendyol Akıllı Veri Çözücü v2")
+st.title("🛡️ Trendyol Akıllı Veri Çözücü v2")
+st.info("Trendyol engeli nedeniyle 'Manuel Veri Yapıştır' sekmesi en güvenli yoldur.")
 
-# Sekmeler Tasarımı Değiştiriyor
-tab1, tab2 = st.tabs(["✨ Otomatik Analiz (Hızlı)", "📝 Manuel Veri Yapıştır"])
+tab1, tab2 = st.tabs(["📝 Manuel Veri Yapıştır", "ℹ️ Nasıl Yapılır?"])
 
 with tab1:
-    st.subheader("🔗 API URL ile Otomatik Çek")
-    st.info("Trendyol Network panelindeki 'filter' veya 'sr' dosyasının URL'sini yapıştırın.")
-    api_input = st.text_input("API Linkini buraya yapıştırın:")
-    if st.button("Otomatik Veri Çek"):
-        if api_input:
-            with st.spinner("Zırhlı bot devreye giriyor..."):
-                raw = auto_scrape(api_input)
-                if raw:
-                    df = process_data(raw)
-                    st.success(f"✅ {len(df)} ürün başarıyla çekildi!")
-                    st.download_button("📥 Excel İndir", to_excel(df), "trendyol_auto.xlsx")
+    raw_text = st.text_area("JSON verisini buraya yapıştırın:", height=300, placeholder="<!DOCTYPE... veya { ... }")
+    if st.button("Analizi Başlat"):
+        if raw_text:
+            try:
+                # Önce JSON deniyoruz
+                try:
+                    data = json.loads(raw_text.strip())
+                except:
+                    # HTML içinden veri ayıklama (regex)
+                    import re
+                    match = re.search(r'__SEARCH_APP_INITIAL_STATE__\s*=\s*({.*?});', raw_text)
+                    if not match:
+                        match = re.search(r'__single-search-result__PROPS\"\s*:\s*({.*?})<', raw_text)
+                    data = json.loads(match.group(1)) if match else None
+                
+                if data:
+                    df = smart_parse(data)
+                    st.success(f"✅ {len(df)} ürün başarıyla ayıklandı!")
+                    st.download_button("📥 Excel Olarak İndir", to_excel(df), "trendyol_rapor.xlsx")
                     st.dataframe(df, use_container_width=True)
                 else:
-                    st.error("❌ Trendyol sunucusu isteği reddetti (403/429). Lütfen sağdaki 'Manuel' sekmesini kullanın.")
+                    st.error("Metin içinde ürün verisi bulunamadı.")
+            except Exception as e:
+                st.error(f"Hata: {e}")
 
 with tab2:
-    st.subheader("📄 JSON Verisini Manuel Çöz")
-    st.write("Network panelinden kopyaladığınız 'Response' içeriğini buraya yapıştırın.")
-    raw_json = st.text_area("JSON içeriği:", height=300)
-    if st.button("Yapıştırılan Veriyi Analiz Et"):
-        if raw_json:
-            try:
-                df = process_data(json.loads(raw_json))
-                st.success(f"✅ {len(df)} ürün başarıyla çözüldü!")
-                st.download_button("📥 Excel İndir", to_excel(df), "trendyol_manual.xlsx")
-                st.dataframe(df, use_container_width=True)
-            except:
-                st.error("❌ JSON formatı hatalı! Kopyaladığınız içeriğin tamamını yapıştırdığınızdan emin olun.")
+    st.markdown("""
+    ### En Hızlı Yöntem:
+    1. Trendyol'da sayfayı aşağı kaydırın.
+    2. F12 -> **Network** sekmesine girin.
+    3. Filtreye `filter` yazın.
+    4. Çıkan dosyaya sağ tıklayıp **Copy Response** yapın.
+    5. Buraya yapıştırın.
+    """)
