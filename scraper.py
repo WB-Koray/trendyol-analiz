@@ -3,40 +3,45 @@ import pandas as pd
 
 def get_trendyol_data(category_id, pages):
     all_products = []
-    # Bu sefer doğrudan web filtreleme API'sini kullanıyoruz
-    base_url = "https://public.trendyol.com/discovery-web-search-service/v1/filter"
+    # Tarayıcı oturumunu simüle etmek için session başlatıyoruz
+    session = requests.Session()
     
+    # Trendyol'un bot korumasını geçmek için en kritik bilgiler
     headers = {
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "tr-TR,tr;q=0.9",
-        "Referer": "https://www.trendyol.com/",
-        "X-Domain": "https://www.trendyol.com"
+        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": f"https://www.trendyol.com/sr?wc={category_id}",
+        "X-Requested-With": "XMLHttpRequest"
     }
     
+    # Önce ana sayfaya bir istek atıp çerezleri (cookies) alıyoruz
+    try:
+        session.get("https://www.trendyol.com", headers=headers, timeout=10)
+    except:
+        pass
+
     for page in range(1, pages + 1):
-        # Parametreleri Trendyol'un mobil sitesi gibi simüle ediyoruz
+        # Arama servisinin asıl adresi
+        url = "https://public.trendyol.com/discovery-web-search-service/v1/filter"
+        
         params = {
-            "wc": str(category_id),
-            "pi": str(page),
+            "wc": category_id,
+            "pi": page,
             "sst": "BEST_SELLER",
             "culture": "tr-TR",
-            "userGenderId": "1",
-            "pId": "0",
-            "scoringAlgorithmId": "2",
-            "categoryRelevancyEnabled": "false",
-            "isLegalRequirementConfirmed": "false",
-            "searchByFeaturedBrand": "false"
+            "storefrontId": "1"
         }
         
         try:
-            # Streamlit Cloud IP'leri engellenebileceği için verify=False ekliyoruz (Gerekirse)
-            response = requests.get(base_url, params=params, headers=headers, timeout=15)
+            # Çerezleri de içeren session ile istek atıyoruz
+            res = session.get(url, params=params, headers=headers, timeout=15)
             
-            if response.status_code == 200:
-                data = response.json()
-                # Trendyol'un iki farklı json yapısı vardır, ikisini de kontrol ediyoruz
+            if res.status_code == 200:
+                data = res.json()
                 products = data.get("content", [])
+                
+                # Eğer content yoksa alternatif anahtarlara bak
                 if not products:
                     products = data.get("products", [])
 
@@ -46,15 +51,11 @@ def get_trendyol_data(category_id, pages):
                         "Marka": p.get("brand", {}).get("name") if p.get("brand") else "-",
                         "Fiyat": p.get("price", {}).get("sellingPrice", 0),
                         "Favori": p.get("favoriteCount", 0),
-                        "Yorum": p.get("ratingCount", 0),
+                        "Değerlendirme": p.get("ratingCount", 0),
                         "Puan": p.get("ratingScore", 0),
                         "Link": "https://www.trendyol.com" + p.get("url", "")
                     })
-            else:
-                # Debug bilgisi: Hangi kodla reddedildiğimizi görelim
-                print(f"Hata: {response.status_code}")
-                
         except Exception as e:
-            print(f"Bağlantı hatası: {e}")
+            print(f"Hata oluştu: {e}")
             
     return pd.DataFrame(all_products)
