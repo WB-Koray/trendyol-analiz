@@ -18,43 +18,26 @@ def smart_parse(js_data):
     
     parsed_list = []
     for p in products:
-        # Fiyat
         pr = p.get("price", {})
         price = pr.get("current", pr.get("sellingPrice", pr.get("originalPrice", 0)))
         
-        # --- ROZET AYIKLAMA (Fenomen Seçimi, En Çok Satan vs.) ---
         badge_text = "-"
         strip_badge = p.get("stripBadge", {})
-        
         if strip_badge:
             b_type = strip_badge.get("type", "")
             b_title = strip_badge.get("title", "")
-            
-            # Trendyol'un İngilizce kodlarını Türkçeye çeviriyoruz
-            if b_type == "BEST_SELLER":
-                badge_text = f"En Çok Satan {b_title}. Ürün"
-            elif b_type == "MOST_RATED":
-                badge_text = f"En Çok Değerlendirilen {b_title}. Ürün"
-            elif b_type == "MOST_FAVOURITE":
-                badge_text = f"En Çok Favorilenen {b_title}. Ürün"
-            elif b_type == "TOP_VIEWED":
-                badge_text = f"En Çok Ziyaret Edilen {b_title}. Ürün"
-            else:
-                badge_text = b_title # Fenomen Seçimi, Birlikte Al Kazan vb. direkt alınır.
+            if b_type == "BEST_SELLER": badge_text = f"En Çok Satan {b_title}. Ürün"
+            elif b_type == "MOST_RATED": badge_text = f"En Çok Değerlendirilen {b_title}. Ürün"
+            elif b_type == "MOST_FAVOURITE": badge_text = f"En Çok Favorilenen {b_title}. Ürün"
+            elif b_type == "TOP_VIEWED": badge_text = f"En Çok Ziyaret Edilen {b_title}. Ürün"
+            else: badge_text = b_title
 
-        # --- FAVORİ VE SATIŞ BİLGİSİ ---
-        # Ana dizindeki net rakamı almaya öncelik veriyoruz (23K yerine 23000 almak için)
         fav = p.get("favoriteCount", 0)
         orders = "-"
-        
         for s in p.get("socialProof", []):
-            if s.get("key") == "orderCount": 
-                orders = s.get("value", "-")
-            # Eğer ana dizinde favori yoksa socialProof içindekini ("23K" olanı) yedek olarak al
-            if s.get("key") == "favoriteCount" and fav == 0:
-                fav = s.get("value", "-")
+            if s.get("key") == "orderCount": orders = s.get("value", "-")
+            if s.get("key") == "favoriteCount" and fav == 0: fav = s.get("value", "-")
         
-        # --- YORUM SAYISI VE PUAN ---
         rating_obj = p.get("ratingScore", {})
         if isinstance(rating_obj, dict):
             review_count = rating_obj.get("totalCount", 0)
@@ -76,26 +59,26 @@ def smart_parse(js_data):
         })
     return pd.DataFrame(parsed_list)
 
-# --- ARAYÜZ TASARIMI ---
-st.title("🛡️ Trendyol Akıllı Veri Çözücü v5")
+st.title("🛡️ Trendyol Akıllı Veri Çözücü v6 (Dosya Modu)")
 
 if 'main_df' not in st.session_state:
     st.session_state.main_df = pd.DataFrame()
 
 col1, col2 = st.columns([4, 1])
 with col1:
-    raw_text = st.text_area("Bookmarklet verisini buraya yapıştırın:", height=150)
+    uploaded_file = st.file_uploader("Yer imi ile indirdiğiniz 'trendyol_veri.json' dosyasını buraya sürükleyin:", type=["json"])
 with col2:
     if st.button("➕ Listeye Ekle"):
-        if raw_text:
+        if uploaded_file is not None:
             try:
-                data = json.loads(raw_text.strip())
+                data = json.load(uploaded_file)
                 new_df = smart_parse(data)
-                # Yeni ürünleri ekle ve mükerrerleri sil
                 st.session_state.main_df = pd.concat([st.session_state.main_df, new_df]).drop_duplicates(subset=['Link'])
                 st.success("Başarıyla Eklendi!")
-            except: 
-                st.error("Veri okunamadı. Hatalı format.")
+            except Exception as e: 
+                st.error(f"Dosya okunamadı: {e}")
+        else:
+            st.warning("Lütfen önce JSON dosyasını yükleyin.")
     if st.button("🗑️ Temizle"):
         st.session_state.main_df = pd.DataFrame()
         st.rerun()
@@ -105,9 +88,7 @@ if not st.session_state.main_df.empty:
     st.divider()
     
     c1, c2, c3 = st.columns(3)
-    c1.metric("Toplam Ürün", len(df))
+    c1.metric("Toplam Benzersiz Ürün", len(df))
     
     st.download_button("📥 Excel Raporu Al", to_excel(df), "trendyol_rapor.xlsx")
-    
-    # Tablo yüksekliğini (height) 800 piksel yaparak tek seferde 25-30 ürün görünmesini sağladık
     st.dataframe(df, use_container_width=True, height=800)
