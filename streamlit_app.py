@@ -18,32 +18,43 @@ def smart_parse(js_data):
     
     parsed_list = []
     for p in products:
+        # Fiyat
         pr = p.get("price", {})
         price = pr.get("current", pr.get("sellingPrice", pr.get("originalPrice", 0)))
         
-        # --- ROZET AYIKLAMA (Turuncu Şerit) ---
+        # --- ROZET AYIKLAMA (Fenomen Seçimi, En Çok Satan vs.) ---
         badge_text = "-"
-        badges = p.get("badges", {})
-        top_badge = badges.get("topRankingBadge", {})
-        if top_badge:
-            # "En Çok Satan" + " " + "1."
-            badge_text = f"{top_badge.get('type', '')} {top_badge.get('title', '')}".replace('BEST_SELLER', 'En Çok Satan').strip()
+        strip_badge = p.get("stripBadge", {})
         
-        if badge_text == "-" or not badge_text:
-            tags = p.get("tagDetails", p.get("stamps", []))
-            for tag in tags:
-                d_name = tag.get("displayName", "")
-                if "Satan" in d_name or "Değerlendirilen" in d_name or "Ziyaret" in d_name:
-                    badge_text = d_name
+        if strip_badge:
+            b_type = strip_badge.get("type", "")
+            b_title = strip_badge.get("title", "")
+            
+            # Trendyol'un İngilizce kodlarını Türkçeye çeviriyoruz
+            if b_type == "BEST_SELLER":
+                badge_text = f"En Çok Satan {b_title}. Ürün"
+            elif b_type == "MOST_RATED":
+                badge_text = f"En Çok Değerlendirilen {b_title}. Ürün"
+            elif b_type == "MOST_FAVOURITE":
+                badge_text = f"En Çok Favorilenen {b_title}. Ürün"
+            elif b_type == "TOP_VIEWED":
+                badge_text = f"En Çok Ziyaret Edilen {b_title}. Ürün"
+            else:
+                badge_text = b_title # Fenomen Seçimi, Birlikte Al Kazan vb. direkt alınır.
 
-        # --- FAVORİ VE SATIŞ ---
+        # --- FAVORİ VE SATIŞ BİLGİSİ ---
+        # Ana dizindeki net rakamı almaya öncelik veriyoruz (23K yerine 23000 almak için)
         fav = p.get("favoriteCount", 0)
         orders = "-"
-        for s in p.get("socialProof", []):
-            if s.get("key") == "favoriteCount": fav = s.get("value", fav)
-            if s.get("key") == "orderCount": orders = s.get("value", "-")
         
-        # --- YORUM SAYISI ---
+        for s in p.get("socialProof", []):
+            if s.get("key") == "orderCount": 
+                orders = s.get("value", "-")
+            # Eğer ana dizinde favori yoksa socialProof içindekini ("23K" olanı) yedek olarak al
+            if s.get("key") == "favoriteCount" and fav == 0:
+                fav = s.get("value", "-")
+        
+        # --- YORUM SAYISI VE PUAN ---
         rating_obj = p.get("ratingScore", {})
         if isinstance(rating_obj, dict):
             review_count = rating_obj.get("totalCount", 0)
@@ -65,8 +76,8 @@ def smart_parse(js_data):
         })
     return pd.DataFrame(parsed_list)
 
-# --- ARAYÜZ ---
-st.title("🛡️ Trendyol Akıllı Veri Çözücü v4.1")
+# --- ARAYÜZ TASARIMI ---
+st.title("🛡️ Trendyol Akıllı Veri Çözücü v5")
 
 if 'main_df' not in st.session_state:
     st.session_state.main_df = pd.DataFrame()
@@ -80,9 +91,11 @@ with col2:
             try:
                 data = json.loads(raw_text.strip())
                 new_df = smart_parse(data)
+                # Yeni ürünleri ekle ve mükerrerleri sil
                 st.session_state.main_df = pd.concat([st.session_state.main_df, new_df]).drop_duplicates(subset=['Link'])
-                st.success("Eklendi!")
-            except: st.error("Hata!")
+                st.success("Başarıyla Eklendi!")
+            except: 
+                st.error("Veri okunamadı. Hatalı format.")
     if st.button("🗑️ Temizle"):
         st.session_state.main_df = pd.DataFrame()
         st.rerun()
@@ -90,5 +103,11 @@ with col2:
 if not st.session_state.main_df.empty:
     df = st.session_state.main_df
     st.divider()
+    
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Toplam Ürün", len(df))
+    
     st.download_button("📥 Excel Raporu Al", to_excel(df), "trendyol_rapor.xlsx")
-    st.dataframe(df, use_container_width=True)
+    
+    # Tablo yüksekliğini (height) 800 piksel yaparak tek seferde 25-30 ürün görünmesini sağladık
+    st.dataframe(df, use_container_width=True, height=800)
