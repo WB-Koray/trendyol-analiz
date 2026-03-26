@@ -3,7 +3,7 @@ import pandas as pd
 import json
 from io import BytesIO
 
-st.set_page_config(page_title="Trendyol Popülerlik Analizi", layout="wide", page_icon="🚀")
+st.set_page_config(page_title="Trendyol Detaylı Analiz", layout="wide", page_icon="🚀")
 
 def to_excel(df):
     output = BytesIO()
@@ -21,51 +21,59 @@ def smart_parse(js_data):
         pr = p.get("price", {})
         price = pr.get("current", pr.get("sellingPrice", pr.get("originalPrice", 0)))
         
-        # Rozet (Badge) Ayıklama: "En Çok Değerlendirilen", "En Çok Satan" vb.
+        # --- ROZET AYIKLAMA (Turuncu Şerit) ---
         badge_text = "-"
-        # 1. Yöntem: badges -> topRankingBadge
         badges = p.get("badges", {})
         top_badge = badges.get("topRankingBadge", {})
         if top_badge:
-            # Örn: "En Çok Satan" + " 1. " + "Ürün"
-            badge_text = top_badge.get("title", "")
-            
-        # 2. Yöntem: Eğer üstteki boşsa 'stamps' kısmına bak
+            # "En Çok Satan" + " " + "1."
+            badge_text = f"{top_badge.get('type', '')} {top_badge.get('title', '')}".replace('BEST_SELLER', 'En Çok Satan').strip()
+        
         if badge_text == "-" or not badge_text:
-            stamps = p.get("tagDetails", []) # Bazı paketlerde tagDetails altında olur
-            for tag in stamps:
-                if "encoksatanlar" in tag.get("tag", "").lower() or "ziyaret" in tag.get("tag", "").lower():
-                    badge_text = tag.get("displayName", "-")
+            tags = p.get("tagDetails", p.get("stamps", []))
+            for tag in tags:
+                d_name = tag.get("displayName", "")
+                if "Satan" in d_name or "Değerlendirilen" in d_name or "Ziyaret" in d_name:
+                    badge_text = d_name
 
-        # Favori ve Satış
+        # --- FAVORİ VE SATIŞ ---
         fav = p.get("favoriteCount", 0)
         orders = "-"
         for s in p.get("socialProof", []):
             if s.get("key") == "favoriteCount": fav = s.get("value", fav)
             if s.get("key") == "orderCount": orders = s.get("value", "-")
         
+        # --- YORUM SAYISI ---
+        rating_obj = p.get("ratingScore", {})
+        if isinstance(rating_obj, dict):
+            review_count = rating_obj.get("totalCount", 0)
+            rating_avg = rating_obj.get("averageRating", 0)
+        else:
+            review_count = p.get("ratingCount", 0)
+            rating_avg = rating_obj
+
         parsed_list.append({
             "Ürün Adı": p.get("name", "Bilinmiyor"),
             "Marka": p.get("brand", {}).get("name") if isinstance(p.get("brand"), dict) else p.get("brand", "-"),
-            "Rozet/Sıralama": badge_text, # Aradığın o turuncu şerit bilgisi
+            "Sıralama/Rozet": badge_text,
             "Fiyat (TL)": price,
             "Favori": fav,
-            "Yorum": p.get("ratingCount", 0),
+            "Yorum Sayısı": review_count,
             "Satış Bilgisi": orders,
+            "Puan": rating_avg,
             "Link": "https://www.trendyol.com" + p.get("url", "")
         })
     return pd.DataFrame(parsed_list)
 
-# --- ANA UYGULAMA ---
-st.title("🛡️ Trendyol Akıllı Veri Çözücü v4")
-st.markdown("Bookmarklet'ten kopyaladığınız veriyi yapıştırıp **'Listeye Ekle'** butonuna basın.")
+# --- ARAYÜZ ---
+st.title("🛡️ Trendyol Akıllı Veri Çözücü v4.1")
 
 if 'main_df' not in st.session_state:
     st.session_state.main_df = pd.DataFrame()
 
 col1, col2 = st.columns([4, 1])
 with col1:
-    raw_text = st.text_area("Veri Girişi:", height=150)
+    raw_text = st.text_area("Bookmarklet verisini buraya yapıştırın:", height=150)
 with col2:
     if st.button("➕ Listeye Ekle"):
         if raw_text:
@@ -74,8 +82,7 @@ with col2:
                 new_df = smart_parse(data)
                 st.session_state.main_df = pd.concat([st.session_state.main_df, new_df]).drop_duplicates(subset=['Link'])
                 st.success("Eklendi!")
-            except:
-                st.error("Hata!")
+            except: st.error("Hata!")
     if st.button("🗑️ Temizle"):
         st.session_state.main_df = pd.DataFrame()
         st.rerun()
@@ -83,5 +90,5 @@ with col2:
 if not st.session_state.main_df.empty:
     df = st.session_state.main_df
     st.divider()
-    st.download_button("📥 Excel Raporu Al", to_excel(df), "trendyol_rozetli_analiz.xlsx")
+    st.download_button("📥 Excel Raporu Al", to_excel(df), "trendyol_rapor.xlsx")
     st.dataframe(df, use_container_width=True)
