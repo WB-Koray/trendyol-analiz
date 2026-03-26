@@ -18,9 +18,11 @@ def smart_parse(js_data):
     
     parsed_list = []
     for p in products:
+        # Fiyat Ayıklama
         pr = p.get("price", {})
         price = pr.get("current", pr.get("sellingPrice", pr.get("originalPrice", 0)))
         
+        # Rozet Ayıklama
         badge_text = "-"
         strip_badge = p.get("stripBadge", {})
         if strip_badge:
@@ -32,12 +34,14 @@ def smart_parse(js_data):
             elif b_type == "TOP_VIEWED": badge_text = f"En Çok Ziyaret Edilen {b_title}. Ürün"
             else: badge_text = b_title
 
+        # Favori ve Satış
         fav = p.get("favoriteCount", 0)
         orders = "-"
         for s in p.get("socialProof", []):
             if s.get("key") == "orderCount": orders = s.get("value", "-")
             if s.get("key") == "favoriteCount" and fav == 0: fav = s.get("value", "-")
         
+        # Puan ve Yorum
         rating_obj = p.get("ratingScore", {})
         if isinstance(rating_obj, dict):
             review_count = rating_obj.get("totalCount", 0)
@@ -45,6 +49,11 @@ def smart_parse(js_data):
         else:
             review_count = p.get("ratingCount", 0)
             rating_avg = rating_obj
+
+        # Kimlik Bilgileri (SKU & IDs)
+        content_id = p.get("contentId", "")
+        item_number = p.get("itemNumber", "")
+        listing_id = p.get("listingId", "")
 
         parsed_list.append({
             "Ürün Adı": p.get("name", "Bilinmiyor"),
@@ -55,11 +64,14 @@ def smart_parse(js_data):
             "Yorum Sayısı": review_count,
             "Satış Bilgisi": orders,
             "Puan": rating_avg,
+            "İçerik ID": content_id,
+            "Item No (SKU)": item_number,
+            "Listing ID": listing_id,
             "Link": "https://www.trendyol.com" + p.get("url", "")
         })
     return pd.DataFrame(parsed_list)
 
-st.title("🛡️ Trendyol Akıllı Veri Çözücü v6 (Dosya Modu)")
+st.title("🛡️ Trendyol Akıllı Veri Çözücü v7")
 
 if 'main_df' not in st.session_state:
     st.session_state.main_df = pd.DataFrame()
