@@ -3,27 +3,41 @@ import pandas as pd
 import json
 from io import BytesIO
 
-st.set_page_config(page_title="Trendyol Veri Analizi", layout="wide", page_icon="🚀")
+st.set_page_config(page_title="Trendyol Popülerlik Analizi", layout="wide", page_icon="🚀")
 
 def to_excel(df):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Trendyol_Veri')
+        df.to_excel(writer, index=False, sheet_name='Trendyol_Analiz')
     return output.getvalue()
 
 def smart_parse(js_data):
-    # Ürün listesini farklı anahtarlardan bulmaya çalış
     products = js_data.get("products", js_data.get("content", []))
     if not products and "data" in js_data:
         products = js_data["data"].get("products", [])
     
     parsed_list = []
     for p in products:
-        # Fiyat yakalama (Current, Selling veya Original)
         pr = p.get("price", {})
         price = pr.get("current", pr.get("sellingPrice", pr.get("originalPrice", 0)))
         
-        # Sosyal kanıtlar (Favori ve Satış)
+        # Rozet (Badge) Ayıklama: "En Çok Değerlendirilen", "En Çok Satan" vb.
+        badge_text = "-"
+        # 1. Yöntem: badges -> topRankingBadge
+        badges = p.get("badges", {})
+        top_badge = badges.get("topRankingBadge", {})
+        if top_badge:
+            # Örn: "En Çok Satan" + " 1. " + "Ürün"
+            badge_text = top_badge.get("title", "")
+            
+        # 2. Yöntem: Eğer üstteki boşsa 'stamps' kısmına bak
+        if badge_text == "-" or not badge_text:
+            stamps = p.get("tagDetails", []) # Bazı paketlerde tagDetails altında olur
+            for tag in stamps:
+                if "encoksatanlar" in tag.get("tag", "").lower() or "ziyaret" in tag.get("tag", "").lower():
+                    badge_text = tag.get("displayName", "-")
+
+        # Favori ve Satış
         fav = p.get("favoriteCount", 0)
         orders = "-"
         for s in p.get("socialProof", []):
@@ -33,52 +47,41 @@ def smart_parse(js_data):
         parsed_list.append({
             "Ürün Adı": p.get("name", "Bilinmiyor"),
             "Marka": p.get("brand", {}).get("name") if isinstance(p.get("brand"), dict) else p.get("brand", "-"),
+            "Rozet/Sıralama": badge_text, # Aradığın o turuncu şerit bilgisi
             "Fiyat (TL)": price,
             "Favori": fav,
             "Yorum": p.get("ratingCount", 0),
             "Satış Bilgisi": orders,
-            "Puan": p.get("ratingScore", {}).get("averageRating", 0) if isinstance(p.get("ratingScore"), dict) else p.get("ratingScore", 0),
             "Link": "https://www.trendyol.com" + p.get("url", "")
         })
     return pd.DataFrame(parsed_list)
 
-st.title("🛡️ Trendyol Akıllı Veri Çözücü v2")
-st.info("Trendyol engeli nedeniyle 'Manuel Veri Yapıştır' sekmesi en güvenli yoldur.")
+# --- ANA UYGULAMA ---
+st.title("🛡️ Trendyol Akıllı Veri Çözücü v4")
+st.markdown("Bookmarklet'ten kopyaladığınız veriyi yapıştırıp **'Listeye Ekle'** butonuna basın.")
 
-tab1, tab2 = st.tabs(["📝 Manuel Veri Yapıştır", "ℹ️ Nasıl Yapılır?"])
+if 'main_df' not in st.session_state:
+    st.session_state.main_df = pd.DataFrame()
 
-with tab1:
-    raw_text = st.text_area("JSON verisini buraya yapıştırın:", height=300, placeholder="<!DOCTYPE... veya { ... }")
-    if st.button("Analizi Başlat"):
+col1, col2 = st.columns([4, 1])
+with col1:
+    raw_text = st.text_area("Veri Girişi:", height=150)
+with col2:
+    if st.button("➕ Listeye Ekle"):
         if raw_text:
             try:
-                # Önce JSON deniyoruz
-                try:
-                    data = json.loads(raw_text.strip())
-                except:
-                    # HTML içinden veri ayıklama (regex)
-                    import re
-                    match = re.search(r'__SEARCH_APP_INITIAL_STATE__\s*=\s*({.*?});', raw_text)
-                    if not match:
-                        match = re.search(r'__single-search-result__PROPS\"\s*:\s*({.*?})<', raw_text)
-                    data = json.loads(match.group(1)) if match else None
-                
-                if data:
-                    df = smart_parse(data)
-                    st.success(f"✅ {len(df)} ürün başarıyla ayıklandı!")
-                    st.download_button("📥 Excel Olarak İndir", to_excel(df), "trendyol_rapor.xlsx")
-                    st.dataframe(df, use_container_width=True)
-                else:
-                    st.error("Metin içinde ürün verisi bulunamadı.")
-            except Exception as e:
-                st.error(f"Hata: {e}")
+                data = json.loads(raw_text.strip())
+                new_df = smart_parse(data)
+                st.session_state.main_df = pd.concat([st.session_state.main_df, new_df]).drop_duplicates(subset=['Link'])
+                st.success("Eklendi!")
+            except:
+                st.error("Hata!")
+    if st.button("🗑️ Temizle"):
+        st.session_state.main_df = pd.DataFrame()
+        st.rerun()
 
-with tab2:
-    st.markdown("""
-    ### En Hızlı Yöntem:
-    1. Trendyol'da sayfayı aşağı kaydırın.
-    2. F12 -> **Network** sekmesine girin.
-    3. Filtreye `filter` yazın.
-    4. Çıkan dosyaya sağ tıklayıp **Copy Response** yapın.
-    5. Buraya yapıştırın.
-    """)
+if not st.session_state.main_df.empty:
+    df = st.session_state.main_df
+    st.divider()
+    st.download_button("📥 Excel Raporu Al", to_excel(df), "trendyol_rozetli_analiz.xlsx")
+    st.dataframe(df, use_container_width=True)
